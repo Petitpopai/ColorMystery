@@ -106,8 +106,8 @@ def generate_number_sheet(
         if len(pts) > 1:
             draw_outline.line(pts, fill=255, width=1)
 
-# 4) on récupère le masque final des traits
-border = np.array(outline)
+    # 4) on récupère le masque final des traits
+    border = np.array(outline)
 
 
     # --- fond blanc + traits noirs ---
