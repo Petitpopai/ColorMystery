@@ -86,10 +86,24 @@ def generate_number_sheet(
     mapping = {lbl: i+1 for i, lbl in enumerate(usable)}
     palette_ordered = [palette[lbl] for lbl in usable]
 
-    # --- contours skeleton puis dilation conditionnelle ---
-    border = skeletonize(find_boundaries(labels, mode="thick")).astype(np.uint8) * 255
-    if cfg["contour_iter"] > 0:
-        border = cv2.dilate(border, np.ones((3,3),np.uint8), iterations=cfg["contour_iter"])
+   # --- contours vectoriels via findContours + approxPolyDP 1 px ---
+# 1) créez un masque binaire des frontières de régions
+raw = (find_boundaries(labels, mode="thick") > 0).astype(np.uint8)
+# 2) trouvez tous les contours externes
+contours, _ = cv2.findContours(raw, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+# 3) créez un masque PIL pour dessiner en 1 px
+outline = Image.new("L", (w, h), 0)
+draw_outline = ImageDraw.Draw(outline)
+# 4) pour chaque contour, approx et tracé
+for cnt in contours:
+    # epsilon = lissage : plus petit = conserve fin détails
+    eps = {"low":0.5, "medium":1.0, "high":2.0}[simplify]
+    approx = cv2.approxPolyDP(cnt, eps, True)
+    pts = [tuple(pt[0]) for pt in approx]
+    if len(pts) > 1:
+        draw_outline.line(pts, fill=255, width=1)
+# 5) convertissez en array pour masque
+border = np.array(outline)
 
     # --- fond blanc + traits noirs ---
     sheet = Image.new("RGB", (w, h), "white")
