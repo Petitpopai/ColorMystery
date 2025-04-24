@@ -86,29 +86,10 @@ def generate_number_sheet(
     mapping = {lbl: i+1 for i, lbl in enumerate(usable)}
     palette_ordered = [palette[lbl] for lbl in usable]
 
-   # contours vectoriels optimisés
-    raw = (find_boundaries(labels, mode="thick") > 0).astype(np.uint8)
-    # 1) contours externes, pas trop détaillés
-    contours, _ = cv2.findContours(raw, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    
-    outline = Image.new("L", (w, h), 0)
-    draw_outline = ImageDraw.Draw(outline)
-    for cnt in contours:
-        # 2) on ignore les micro-contours
-        if cv2.contourArea(cnt) < 50:
-            continue
-        # 3) epsilon proportionnel à la longueur pour un lissage adaptatif
-        arc = cv2.arcLength(cnt, True)
-        factor = {"low": 0.002, "medium": 0.005, "high": 0.01}[simplify]
-        eps = factor * arc
-        approx = cv2.approxPolyDP(cnt, eps, True)
-        pts = [tuple(pt[0]) for pt in approx]
-        if len(pts) > 1:
-            draw_outline.line(pts, fill=255, width=1)
-
-    # 4) on récupère le masque final des traits
-    border = np.array(outline)
-
+    # --- contours skeleton puis dilation conditionnelle ---
+    border = skeletonize(find_boundaries(labels, mode="thick")).astype(np.uint8) * 255
+    if cfg["contour_iter"] > 0:
+        border = cv2.dilate(border, np.ones((3,3),np.uint8), iterations=cfg["contour_iter"])
 
     # --- fond blanc + traits noirs ---
     sheet = Image.new("RGB", (w, h), "white")
