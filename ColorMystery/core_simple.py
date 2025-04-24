@@ -115,13 +115,13 @@ def generate_number_sheet(
                             return
 
     # — placer un numéro dans CHAQUE région de la même couleur — #
-       lab_conn = label(labels, connectivity=1)
-       for region in regionprops(lab_conn):
-           lbl = labels[region.coords[0][0], region.coords[0][1]]  # couleur de la région
-           if region.area < 200:      # trop petit pour un chiffre lisible
-               continue
-           mask_region = lab_conn == region.label
-           place_number(mask_region, str(mapping[lbl]))
+    lab_conn = label(labels, connectivity=1)
+    for region in regionprops(lab_conn):
+        lbl = labels[region.coords[0][0], region.coords[0][1]]  # couleur de la région
+        if region.area < 200:      # zone trop petite pour un chiffre lisible
+            continue
+        mask_region = lab_conn == region.label
+        place_number(mask_region, str(mapping[lbl]))
 
 
     # -- palette sous l'image
