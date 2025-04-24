@@ -100,30 +100,26 @@ def generate_number_sheet(
     # -- masque d’occupation pour éviter chevauchements
     occ = np.zeros((h, w), dtype=bool)
 
+        # ─── nouvelle fonction de placement ──────────────────────────────────
     def place_number(region_mask: np.ndarray, num: str):
-        ys, xs = np.where(region_mask)
-        if xs.size == 0:
+        # distance transform sur la zone : 0 aux bords, max au centre
+        dist = distance_transform_edt(region_mask & (border == 0))
+        y, x = np.unravel_index(np.argmax(dist), dist.shape)
+        if dist[y, x] < 3:            # zone trop fine, on ne met rien
             return
-        cx, cy = int(xs.mean()), int(ys.mean())
-        # spirale jusqu'à 15 px autour du centre
-        for r in range(0, 15):
-            for dx in range(-r, r + 1):
-                for dy in range(-r, r + 1):
-                    x, y = cx + dx, cy + dy
-                    if 0 <= x < w and 0 <= y < h:
-                        if border[y, x] == 0 and not occ[y, x]:
-                            draw.text((x, y), num, fill="black", anchor="mm", font=FONT)
-                            occ[max(0, y - 3): y + 4, max(0, x - 3): x + 4] = True
-                            return
+        if not occ[y, x]:
+            draw.text((x, y), num, fill="black", anchor="mm", font=FONT)
+            occ[max(0, y - 3): y + 4, max(0, x - 3): x + 4] = True
 
-    # — placer un numéro dans CHAQUE région de la même couleur — #
+    # ─ placer un numéro dans CHAQUE région (même couleur) ────────────────
     lab_conn = label(labels, connectivity=1)
     for region in regionprops(lab_conn):
-        lbl = labels[region.coords[0][0], region.coords[0][1]]  # couleur de la région
-        if region.area < 200:      # zone trop petite pour un chiffre lisible
+        if region.area < 200:    # min surface pour être lisible
             continue
+        lbl = labels[region.coords[0][0], region.coords[0][1]]
         mask_region = lab_conn == region.label
         place_number(mask_region, str(mapping[lbl]))
+
 
 
     # -- palette sous l'image
