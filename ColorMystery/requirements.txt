@@ -7,3 +7,4 @@ streamlit
 pytest
 flake8
 black
+scikit-image
