@@ -13,6 +13,8 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 from typing import Tuple, List
+from scipy.ndimage import distance_transform_edt
+
 
 import cv2
 import numpy as np
