@@ -38,7 +38,8 @@ if uploaded:
             tmp.write(uploaded.read()); tmp.flush()
             img = Image.open(tmp.name).convert("RGBA")
             k = {"easy": 8, "medium": 16, "hard": 24}[diff]
-            sheet = generate_number_sheet(img, k, simp, "medium")
+            sheet = generate_number_sheet(img, k, simp)         
+
 
         buf = io.BytesIO()
         sheet.save(buf, format="PNG")
