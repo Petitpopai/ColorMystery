@@ -1,0 +1,9 @@
+numpy
+opencv-python-headless
+Pillow
+scikit-learn
+cairosvg
+streamlit
+pytest
+flake8
+black

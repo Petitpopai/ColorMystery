@@ -1,0 +1,11 @@
+{
+  "mode": "Mode",
+  "difficulty": "Difficulty",
+  "detail": "Detail",
+  "width": "Resize (px)",
+  "tile_size": "Tile size (px)",
+  "upload": "Drag & drop your image",
+  "preview": "Preview",
+  "process": "Run",
+  "running": "Processing..."
+}

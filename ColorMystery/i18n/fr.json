@@ -1,0 +1,11 @@
+{
+  "mode": "Mode",
+  "difficulty": "Difficulté",
+  "detail": "Détail",
+  "width": "Redimensionnement (px)",
+  "tile_size": "Taille de tuile (px)",
+  "upload": "Glissez-déposez votre image",
+  "preview": "Aperçu",
+  "process": "Lancer",
+  "running": "Traitement en cours..."
+}
