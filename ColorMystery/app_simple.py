@@ -31,7 +31,7 @@ width = st.number_input(_("width"), 256, 4096, 1024, 64)
 uploaded = st.file_uploader(_("upload"), type=["png", "jpg", "jpeg"])
 
 if uploaded:
-    st.image(uploaded, caption=_("preview"), use_column_width=True)
+    st.image(uploaded, caption=_("preview"), use_container_width=True)
     if st.button(_("process")):
         with st.spinner(_("running")):
             tmp = tempfile.NamedTemporaryFile(delete=False)
@@ -43,6 +43,6 @@ if uploaded:
 
         buf = io.BytesIO()
         sheet.save(buf, format="PNG")
-        st.image(sheet, use_column_width=True)
+        st.image(sheet, use_container_width=True)
         st.download_button("⬇️ Download sheet.png", data=buf.getvalue(),
                            file_name="sheet.png", mime="image/png")
