@@ -1,9 +1,9 @@
 # core_simple.py
 """
-ColorNumber – colour-by-number ultra-rapide
-• Contours noirs (find_boundaries + dilate)
-• Numéros au centre de chaque région (barycentre + petit décalage)
-• Palette sans blanc, texte contrasté
+ColorNumber – générateur de « coloriage à numéros »
+• Contours noirs sur fond blanc (1 px skeleton), police mini pour petites zones
+• Numéros 1…N (blanc/fond exclus), palette sous l’image (texte contrasté)
+• CLI : --difficulty (8/16/24) --simplify (low/medium/high) --width --output
 """
 
 from __future__ import annotations
@@ -17,128 +17,143 @@ from PIL import Image, ImageDraw, ImageFont
 from sklearn.cluster import KMeans
 from skimage.measure import label, regionprops
 from skimage.segmentation import find_boundaries
+from skimage.morphology import skeletonize
+from scipy.ndimage import distance_transform_edt
 
-# Fonts
+# ─── Fonts ─────────────────────────────────────────────────────────────
 FONT = ImageFont.load_default()
 try:
     SMALL_FONT = ImageFont.truetype(FONT.path, 6)
 except Exception:
     SMALL_FONT = FONT
 
-# Presets
+# ─── Simplification presets ────────────────────────────────────────────
 SIMPLIFY_PRESET = {
-    "low":    dict(blur=0, min_area=30,  dilate_iter=1),
-    "medium": dict(blur=1, min_area=100, dilate_iter=2),
-    "high":   dict(blur=2, min_area=200, dilate_iter=3),
+    "low":    dict(blur=0, min_area=50,   contour_iter=0),
+    "medium": dict(blur=2, min_area=600,  contour_iter=1),
+    "high":   dict(blur=3, min_area=1200, contour_iter=2),
 }
 
+# ─── 1) Quantisation + suppression des micro-zones ────────────────────
 def quantize(img: np.ndarray, k: int, min_area: int) -> Tuple[np.ndarray, np.ndarray]:
     h, w = img.shape[:2]
-    km = KMeans(n_clusters=k, n_init="auto", random_state=0).fit(img.reshape(-1,3)/255.0)
+    flat = img.reshape(-1, 3).astype(np.float32) / 255
+    km = KMeans(n_clusters=k, n_init="auto", random_state=0).fit(flat)
     labels = km.labels_.reshape(h, w)
-    # fusion des petites taches
     lab = label(labels, connectivity=1)
     for r in regionprops(lab):
         if r.area < min_area:
-            labels[lab == r.label] = labels[tuple(r.coords[0])]
+            y, x = r.coords[0]
+            labels[lab == r.label] = labels[max(0, y-1), x]
     palette = (km.cluster_centers_ * 255).astype(np.uint8)
     return labels, palette
 
-def generate_number_sheet(image: Image.Image, k: int = 16, simplify: str = "medium") -> Image.Image:
+# ─── 2) Génération de la planche ───────────────────────────────────────
+def generate_number_sheet(
+    image: Image.Image,
+    k: int = 16,
+    simplify: str = "medium",
+) -> Image.Image:
     w, h = image.size
     cfg = SIMPLIFY_PRESET[simplify]
 
-    # 1) Pré-flou (optionnel)
-    arr = cv2.cvtColor(np.array(image), cv2.COLOR_RGBA2RGB)
-    if cfg["blur"]>0:
-        arr = cv2.GaussianBlur(arr, (0,0), cfg["blur"])
+    # --- pré-flou pour lisser le bruit si demandé
+    np_img = cv2.cvtColor(np.array(image), cv2.COLOR_RGBA2RGB)
+    if cfg["blur"] > 0:
+        np_img = cv2.GaussianBlur(np_img, (0, 0), cfg["blur"])
 
-    # 2) Quantize & palette
-    labels, palette = quantize(arr, k, cfg["min_area"])
+    # --- quantisation et fusion
+    labels, palette = quantize(np_img, k, cfg["min_area"])
     unique = np.unique(labels)
 
-    # 3) Skip blanc & fond
+    # --- repérer les labels à ignorer (blanc = papier + fond global) ---
     skip = set()
-    # blanc (R,G,B>230)
+    # 1) near-white
     for lbl in unique:
-        r,g,b = palette[lbl]
-        if r>230 and g>230 and b>230:
+        r, g, b = palette[lbl]
+        if r > 230 and g > 230 and b > 230:
             skip.add(lbl)
-    # fond (grosse région au bord)
-    surf = w*h
-    lf = label(labels, connectivity=1)
-    for r in regionprops(lf):
-        if r.area/surf>0.1 and (0 in (r.bbox[0],r.bbox[1]) or r.bbox[2]==h or r.bbox[3]==w):
-            skip.add(labels[tuple(r.coords[0])])
+    # 2) grande région de fond (≥10% surface & touche un bord)
+    surface = w * h
+    lab_full = label(labels, connectivity=1)
+    for r in regionprops(lab_full):
+        if r.area / surface >= 0.10:
+            if 0 in (r.bbox[0], r.bbox[1]) or r.bbox[2] == h or r.bbox[3] == w:
+                skip.add(labels[r.coords[0][0], r.coords[0][1]])
 
+    # --- construire mapping & palette sans ces labels ---
     usable = [lbl for lbl in unique if lbl not in skip]
-    mapping = {lbl:i+1 for i,lbl in enumerate(usable)}
+    mapping = {lbl: i+1 for i, lbl in enumerate(usable)}
     palette_ordered = [palette[lbl] for lbl in usable]
 
-    # 4) Contours
-    edge = find_boundaries(labels, mode="thick").astype(np.uint8)*255
-    kernel = np.ones((3,3),np.uint8)
-    edge = cv2.dilate(edge, kernel, iterations=cfg["dilate_iter"])
+    # --- contours skeleton puis dilation conditionnelle ---
+    border = skeletonize(find_boundaries(labels, mode="thick")).astype(np.uint8) * 255
+    if cfg["contour_iter"] > 0:
+        border = cv2.dilate(border, np.ones((3,3),np.uint8), iterations=cfg["contour_iter"])
 
-    # 5) Créer la feuille
-    sheet = Image.new("RGB",(w,h),"white")
-    sheet.paste("black", mask=Image.fromarray(edge))
+    # --- fond blanc + traits noirs ---
+    sheet = Image.new("RGB", (w, h), "white")
+    sheet.paste("black", mask=Image.fromarray(border).convert("L"))
     draw = ImageDraw.Draw(sheet)
-    occ = np.zeros((h,w),bool)
+    occ = np.zeros((h, w), dtype=bool)
 
-    # 6) Placement des numéros au barycentre (+ petit recul si sur le contour)
-    lf = label(labels, connectivity=1)
-    for r in regionprops(lf):
-        lbl = labels[tuple(r.coords[0])]
-        if lbl not in mapping or r.area< cfg["min_area"]:
+    # --- placement des numéros au point le + éloigné des bords ---
+    def place_number(mask, num, font):
+        dist = distance_transform_edt(mask & (border == 0))
+        y, x = np.unravel_index(np.argmax(dist), dist.shape)
+        if dist[y, x] < 3 or occ[y, x]:
+            return
+        draw.text((x, y), num, fill="black", anchor="mm", font=font)
+        occ[max(0,y-3):y+4, max(0,x-3):x+4] = True
+
+    lab_conn = label(labels, connectivity=1)
+    for region in regionprops(lab_conn):
+        lbl = labels[region.coords[0][0], region.coords[0][1]]
+        if lbl not in mapping:
             continue
-        cy, cx = map(int, r.centroid)
-        # si c’est un trait, reculer jusqu’à pixel blanc
-        for dx in (0, -1,1,0):
-            for dy in (0,0,-1,1):
-                x,y = cx+dx, cy+dy
-                if 0<=x<w and 0<=y<h and edge[y,x]==0:
-                    cx,cy = x,y
-                    break
-        font = FONT if r.area>100 else SMALL_FONT
-        if not occ[cy,cx]:
-            draw.text((cx,cy), str(mapping[lbl]), fill="black", anchor="mm", font=font)
-            occ[max(0,cy-3):cy+4, max(0,cx-3):cx+4]=True
+        area = region.area
+        if area < 30:
+            continue
+        mask_region = lab_conn == region.label
+        font = FONT if area >= 100 else SMALL_FONT
+        place_number(mask_region, str(mapping[lbl]), font)
 
-    # 7) Palette
-    strip_h=60
-    final = Image.new("RGB",(w,h+strip_h),"white")
-    final.paste(sheet,(0,0))
+    # --- palette en bas avec contraste automatique ---
+    strip_h = 60
+    final = Image.new("RGB", (w, h+strip_h), "white")
+    final.paste(sheet, (0,0))
     dp = ImageDraw.Draw(final)
-    spacing = max(50, w//max(1,len(usable)))
-    for i,col in enumerate(palette_ordered):
-        x0,y0 = 10+i*spacing, h+10
-        rgb=tuple(int(c) for c in col)
-        dp.rectangle([x0,y0,x0+40,y0+40], fill=rgb)
-        lum=0.2126*rgb[0]+0.7152*rgb[1]+0.0722*rgb[2]
-        tc="white" if lum<150 else "black"
-        dp.text((x0+20,y0+20), str(i+1), fill=tc, anchor="mm", font=FONT)
+    spacing = max(50, w // max(1, len(usable)))
+    for i, col in enumerate(palette_ordered):
+        x0 = 10 + i*spacing
+        y0 = h + 10
+        rgb = tuple(int(c) for c in col)
+        dp.rectangle([x0, y0, x0+40, y0+40], fill=rgb)
+        lum = 0.2126*rgb[0] + 0.7152*rgb[1] + 0.0722*rgb[2]
+        txt_color = "white" if lum < 150 else "black"
+        dp.text((x0+20, y0+20), str(i+1), fill=txt_color, anchor="mm", font=FONT)
 
     return final
 
+# ─── 3) CLI ─────────────────────────────────────────────────────────────
 def main():
-    p=argparse.ArgumentParser(prog="colornumber")
-    p.add_argument("image")
-    p.add_argument("--difficulty",choices=["easy","medium","hard"],default="medium")
-    p.add_argument("--simplify",choices=["low","medium","high"],default="medium")
-    p.add_argument("--width",type=int,default=512)
-    p.add_argument("--output",default="sheet.png")
-    args=p.parse_args()
+    p = argparse.ArgumentParser(prog="colornumber")
+    p.add_argument("image", help="Fichier PNG/JPG d'entrée")
+    p.add_argument("--difficulty", choices=["easy","medium","hard"], default="medium")
+    p.add_argument("--simplify", choices=["low","medium","high"], default="medium")
+    p.add_argument("--width", type=int, default=1024, help="Max largeur (0=pas redim.)")
+    p.add_argument("--output", default="sheet.png", help="PNG résultat")
+    args = p.parse_args()
 
-    dm={"easy":8,"medium":16,"hard":24}
-    img=Image.open(args.image).convert("RGBA")
+    dm = {"easy":8,"medium":16,"hard":24}
+    img = Image.open(args.image).convert("RGBA")
     if args.width>0 and img.width>args.width:
-        r=args.width/img.width
-        img=img.resize((args.width,int(img.height*r)),Image.Resampling.LANCZOS)
+        r = args.width/img.width
+        img = img.resize((args.width,int(img.height*r)), Image.Resampling.LANCZOS)
 
-    sheet=generate_number_sheet(img, dm[args.difficulty], args.simplify)
-    sheet.save(args.output,dpi=(300,300))
-    print("Saved",args.output)
+    sheet = generate_number_sheet(img, dm[args.difficulty], args.simplify)
+    sheet.save(args.output, dpi=(300,300))
+    print(f"✅ Saved {args.output}")
 
 if __name__=="__main__":
     main()
